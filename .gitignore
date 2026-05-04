@@ -1,0 +1,12 @@
+# Entorno Virtual
+venv/
+.env
+
+# Evidencias y Reportes (No subir capturas de tu pantalla a la nube)
+reports/
+evidencia/
+*.log
+
+# Python cache
+__pycache__/
+*.py[cod]
