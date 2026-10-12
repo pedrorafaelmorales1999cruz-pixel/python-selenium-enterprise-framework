@@ -15,10 +15,29 @@ class TestOrchestrator:
         if test_files:
             self.test_files = [BASE_DIR / f for f in test_files]
         else:
-            # Auto-descubrimiento inteligente: busca archivos de prueba en todo el árbol del proyecto.
-            # Usamos un set para evitar duplicados si un archivo cumple ambos patrones.
+            # Auto-descubrimiento inteligente, quirúrgico y blindado:
+            # Buscamos patrones específicos ignorando entornos virtuales, sistemas y carpetas externas.
             patterns = ["test_*.py", "manejo_*.py"]
-            self.test_files = list({f for p in patterns for f in BASE_DIR.rglob(p)})
+            excluded_dirs = {
+                ".venv", 
+                "venv", 
+                ".git", 
+                "__pycache__", 
+                "reports", 
+                ".vs", 
+                "qa-automation-selenium-python"
+            }
+            
+            found_files = set()
+            for pattern in patterns:
+                for file_path in BASE_DIR.rglob(pattern):
+                    # Validar que ninguna parte de la ruta contenga directorios excluidos
+                    if any(excluded in file_path.parts for excluded in excluded_dirs):
+                        continue
+                    found_files.add(file_path)
+            
+            # Ordenamos alfabéticamente para mantener una ejecución estructurada
+            self.test_files = sorted(list(found_files))
             
         self.results: List[Dict[str, Any]] = []
         self.run_id = datetime.now().strftime("RUN_%Y%m%d_%H%M%S")
@@ -30,17 +49,16 @@ class TestOrchestrator:
         🚀 QA AUTOMATION FRAMEWORK - TEST SUITE RUNNER
         Ejecución iniciada: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
         ID de Sesión: {self.run_id}
+        Archivos detectados: {len(self.test_files)}
         {'='*60}
         """
         print(banner)
 
     def _execute_test(self, test_path: Path) -> Dict[str, Any]:
-        """Ejecuta un proceso de prueba individual y captura métricas."""
+        """Ejecuta un proceso de prueba individual de forma aislada y captura métricas."""
         test_name = test_path.name
-        print(f"🧪 [EJECUTANDO]: {test_name}...", end="\r")
         
-        # Inyectamos el directorio base en el PYTHONPATH para que los scripts
-        # hijos encuentren config.py y otros módulos sin necesidad de sys.path.append
+        # Inyectamos el directorio base en el PYTHONPATH y pasamos el ID de sesión
         env = os.environ.copy()
         env["PYTHONPATH"] = str(BASE_DIR)
         env["PYTHONUTF8"] = "1"
@@ -56,7 +74,7 @@ class TestOrchestrator:
                 encoding="utf-8",
                 errors="replace",
                 check=False,
-                timeout=180,  # Límite de 3 minutos por prueba
+                timeout=180,  # Límite de seguridad de 3 minutos por script
                 env=env
             )
             duration = time.time() - start
@@ -71,7 +89,7 @@ class TestOrchestrator:
                 "name": test_name,
                 "status": "TIMEOUT",
                 "duration": "180s",
-                "error": "La prueba excedió el tiempo máximo de ejecución."
+                "error": "La prueba excedió el tiempo máximo de ejecución de 3 minutos."
             }
         except Exception as e:
             return {
@@ -83,15 +101,19 @@ class TestOrchestrator:
 
     def run_all(self):
         self._print_banner()
+        
+        if not self.test_files:
+            print("⚠️ No se encontraron archivos de prueba válidos para ejecutar.")
+            return
+
         self.start_time = time.time()
         
-        # Determinamos el número de trabajadores (máximo 4 para no saturar el sistema con navegadores)
-        max_workers = min(os.cpu_count() or 1, 4)
+        # Limitamos a máximo 4 hilos para equilibrar rendimiento y recursos del navegador
+        max_workers = 1  # Ejecución secuencial y estable para pruebas de navegador
         print(f"🚀 Iniciando ejecución paralela ({max_workers} hilos de ejecución)\n")
 
         with ProcessPoolExecutor(max_workers=max_workers) as executor:
-            # Mapeamos los tests a futuros
-            futures = {executor.submit(self._execute_test, test): test for test in self.test_files if test.exists()}
+            futures = {executor.submit(self._execute_test, test): test for test in self.test_files}
             
             for future in as_completed(futures):
                 res = future.result()
@@ -126,17 +148,17 @@ class TestOrchestrator:
         """
         print(summary)
         
-        # Guardamos el reporte en un archivo físico dentro del RUN actual
+        # Persistencia del reporte consolidado en la carpeta de la sesión
         report_path = EVIDENCIA_DIR / self.run_id / "execution_summary.log"
         try:
             report_path.parent.mkdir(parents=True, exist_ok=True)
             with open(report_path, "w", encoding="utf-8") as f:
                 f.write(summary)
         except Exception as e:
-            print(f"⚠️  No se pudo guardar el archivo de log: {e}")
+            print(f"⚠️ No se pudo guardar el archivo de log: {e}")
 
 if __name__ == "__main__":
-    # Si se deja vacío, buscará automáticamente todos los tests del proyecto
+    # Orquestador automático de la suite de QA
     orchestrator = TestOrchestrator()
     
     try:
